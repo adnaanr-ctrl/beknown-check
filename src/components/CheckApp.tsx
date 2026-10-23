@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import CopyButton from "@/components/CopyButton";
+import { CountUp, DragRow, Reveal } from "@/components/Reveal";
 import { countRivals, mentionRate, mentionsBusiness } from "@/lib/analysis";
 import { ApiCallError, postJson, runPool } from "@/lib/client";
 import type { Analysis, AnswerRecord, BusinessType, Claim, Fixes, GeneratedQuestion, Language, Profile } from "@/lib/types";
@@ -249,13 +250,15 @@ export default function CheckApp() {
   const showProgress = busy || (phase === "failed" && !analysis);
 
   return (
-    <div className="wrap">
+    <div className="wrap check" id="check">
       {/* ---------- Intro and form ---------- */}
-      <section className="intro">
-        <h1>What does AI tell your customers about your café?</h1>
+      <section className="check-intro">
+        <p className="label">[ YOUR TURN ]</p>
+        <h2 className="check-title">
+          Run a check on <em>your</em> place.
+        </h2>
         <p className="lead">
-          Enter your business. We ask an AI assistant the questions your customers would ask, show whether it names you, check what it says
-          against your own facts, and draft fixes you can paste into your listings.
+          Enter your business and the facts you know are true. The more facts you add, the more the comparison can tell you.
         </p>
       </section>
 
@@ -335,12 +338,13 @@ export default function CheckApp() {
         )}
 
         <div className="actions">
-          <button type="submit" className="btn btn-primary" disabled={busy}>
+          <button type="submit" className="btn btn-primary" data-magnetic disabled={busy}>
             {busy ? "Running…" : "Run the check"}
           </button>
           <button
             type="button"
             className="btn"
+            data-magnetic
             disabled={busy}
             onClick={() => {
               setProfile(EXAMPLE);
@@ -444,10 +448,10 @@ function Results({
 
   return (
     <>
-      <section className="card result-hero" aria-labelledby="r-title">
+      <Reveal as="section" className="card result-hero" >
         <h2 id="r-title">Does the AI name {profile.name}?</h2>
         <p className="big">
-          {rate.named} of {rate.total} answers
+          <CountUp value={rate.named} /> of <CountUp value={rate.total} /> answers
         </p>
         <p>
           to questions that do not name you included {profile.name}
@@ -460,20 +464,21 @@ function Results({
           </p>
         )}
         <p className="hint">Small sample: {rate.total} answers. Run the check again and the numbers can change, because AI answers vary from run to run.</p>
-      </section>
+      </Reveal>
 
       {rivals.length > 0 && (
-        <section className="card" aria-labelledby="rivals-title">
+        <Reveal as="section" className="card">
           <h2 id="rivals-title">Who the AI named instead</h2>
           <ul className="rivals">
             {rivals.map((r) => (
-              <li key={r.name}>
-                <span>{r.name}</span>
+              <li key={r.name} style={{ ["--w" as string]: `${Math.round((r.count / rivals[0].count) * 100)}%` }}>
+                <span className="rival-name">{r.name}</span>
+                <span className="rival-bar" aria-hidden="true" />
                 <span className="count">{r.count} {r.count === 1 ? "answer" : "answers"}</span>
               </li>
             ))}
           </ul>
-        </section>
+        </Reveal>
       )}
 
       <section className="card" aria-labelledby="claims-title">
@@ -487,7 +492,7 @@ function Results({
             </p>
             <ul className="claims">
               {[...conflicts, ...others].map((c, i) => (
-                <li key={i} className={`claim claim-${c.status}`}>
+                <Reveal as="li" key={i} delay={Math.min(i, 5) * 70} className={`claim claim-${c.status}`}>
                   <div className="claim-head">
                     <span className="chip">{c.field}</span>
                     <span className={`status status-${c.status}`}>{STATUS_LABEL[c.status]}</span>
@@ -510,7 +515,7 @@ function Results({
                       </a>
                     ) : null}
                   </p>
-                </li>
+                </Reveal>
               ))}
             </ul>
           </>
@@ -553,12 +558,15 @@ function Results({
                 Check these numbers before using the text. They are not in the facts you typed: <strong>{fixes.unverifiedNumbers.join(", ")}</strong>.
               </p>
             )}
-            <Ticket title="Google Business Profile description" text={fixes.googleDescription} />
-            <Ticket title="Zomato and Swiggy description" text={fixes.marketplaceDescription} />
-            {fixes.hoursLine && <Ticket title="Opening hours line" text={fixes.hoursLine} />}
-            {fixes.faqs.map((f, i) => (
-              <Ticket key={i} title={`Website FAQ ${i + 1}: ${f.question}`} text={`${f.question}\n${f.answer}`} />
-            ))}
+            <p className="label swipe-hint">[ DRAG OR SWIPE → ]</p>
+            <DragRow className="tickets">
+              <Ticket title="Google Business Profile description" text={fixes.googleDescription} />
+              <Ticket title="Zomato and Swiggy description" text={fixes.marketplaceDescription} />
+              {fixes.hoursLine && <Ticket title="Opening hours line" text={fixes.hoursLine} />}
+              {fixes.faqs.map((f, i) => (
+                <Ticket key={i} title={`Website FAQ ${i + 1}: ${f.question}`} text={`${f.question}\n${f.answer}`} />
+              ))}
+            </DragRow>
             {fixes.needsFromOwner.length > 0 && (
               <>
                 <h3>Facts you could add to make these better</h3>
