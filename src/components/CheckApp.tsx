@@ -151,14 +151,18 @@ export default function CheckApp() {
       const attempt = async () => postJson<{ text: string; sources: { title: string; uri: string }[]; model: string }>("/api/ask", { question: rec.question });
       let updated: AnswerRecord;
       try {
-        let res;
-        try {
-          res = await attempt();
-        } catch (first) {
-          const fatal = first instanceof ApiCallError && ["invalid_key", "missing_key", "rate_limited"].includes(first.code);
-          if (fatal) throw first;
-          await new Promise((r) => setTimeout(r, 2500));
-          res = await attempt();
+        // Up to 3 tries. Waits grow (and vary a little) so rate-limited calls do not all retry at once.
+        const waits = [3000, 8000];
+        let res: Awaited<ReturnType<typeof attempt>> | undefined;
+        for (let n = 0; ; n++) {
+          try {
+            res = await attempt();
+            break;
+          } catch (err) {
+            const fatal = err instanceof ApiCallError && ["invalid_key", "missing_key", "rate_limited"].includes(err.code);
+            if (fatal || n >= waits.length || id !== runId.current) throw err;
+            await new Promise((r) => setTimeout(r, waits[n] + Math.random() * 1000));
+          }
         }
         updated = { ...rec, status: "ok", text: res.text, sources: res.sources, model: res.model, namedQuick: mentionsBusiness(res.text, p.name) };
       } catch (e) {
@@ -166,7 +170,7 @@ export default function CheckApp() {
       }
       if (id === runId.current) setAnswers((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
       return updated;
-    });
+    }, () => id !== runId.current);
     if (id !== runId.current) return;
 
     const okCount = finished.filter((r) => r.status === "ok").length;

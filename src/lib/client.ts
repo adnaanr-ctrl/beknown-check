@@ -32,11 +32,17 @@ export async function postJson<T>(url: string, body: unknown): Promise<T> {
 }
 
 /** Run async tasks with at most `limit` in flight. Results keep their input order. */
-export async function runPool<T, R>(items: T[], limit: number, worker: (item: T, index: number) => Promise<R>): Promise<R[]> {
+export async function runPool<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<R>,
+  shouldStop: () => boolean = () => false,
+): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let next = 0;
   async function lane() {
     while (true) {
+      if (shouldStop()) return; // the run was abandoned: do not start more calls
       const i = next++;
       if (i >= items.length) return;
       results[i] = await worker(items[i], i);

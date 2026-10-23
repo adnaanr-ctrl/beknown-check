@@ -29,7 +29,21 @@ export class GeminiError extends Error {
 
 /** Newest first. If GEMINI_MODEL is set, only that model is used. */
 const DEFAULT_MODELS = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"];
-const REQUEST_TIMEOUT_MS = 45_000;
+// Vercel stops a route after 60 s (maxDuration in each route file). Every Gemini step gets a total
+// time budget below that, so a slow step ends with our own plain "timeout" message, not a raw 504.
+const BUDGET_MS = 55_000;
+const GROUNDED_CALL_MS = 40_000;
+const JSON_CALL_MS = 35_000;
+const MIN_USEFUL_MS = 4_000;
+
+/** Time at which the current step must be finished. */
+export function newDeadline(budgetMs = BUDGET_MS): number {
+  return Date.now() + budgetMs;
+}
+
+export function msLeft(deadline: number): number {
+  return deadline - Date.now();
+}
 
 let preferredModel: string | undefined;
 
@@ -87,8 +101,14 @@ async function generate(
   model: string,
   contents: string,
   config: GenerateContentConfig,
+  deadline: number,
+  callMs: number,
 ): Promise<GenerateContentResponse> {
-  const base: GenerateContentConfig = { ...config, httpOptions: { timeout: REQUEST_TIMEOUT_MS } };
+  const left = msLeft(deadline);
+  if (left < MIN_USEFUL_MS) {
+    throw new GeminiError("timeout", "Gemini took too long to answer. Try again.", "time budget used up");
+  }
+  const base: GenerateContentConfig = { ...config, httpOptions: { timeout: Math.min(callMs, left) } };
   // Gemini 3 models accept a thinking level; a lower level is faster and cheaper for this task.
   if (model.startsWith("gemini-3")) {
     try {
@@ -151,8 +171,9 @@ export interface GroundedAnswer {
  * tier, so the answer is the model's own knowledge and no sources are returned.
  */
 export async function askGrounded(question: string): Promise<GroundedAnswer> {
+  const deadline = newDeadline();
   const { value, model } = await withModelFallback(async (ai, m) => {
-    const res = await generate(ai, m, question, { systemInstruction: ASK_SYSTEM });
+    const res = await generate(ai, m, question, { systemInstruction: ASK_SYSTEM }, deadline, GROUNDED_CALL_MS);
     const sources: Source[] = [];
     return { text: assertUsable(res), sources };
   });
@@ -164,17 +185,25 @@ export interface JsonResult<T> {
   model: string;
 }
 
-/** Ask for JSON, validate it with a zod schema, and retry once if the output is malformed. */
-export async function generateJson<T>(system: string, prompt: string, schema: ZodType<T>): Promise<JsonResult<T>> {
+/**
+ * Ask for JSON, validate it with a zod schema, and retry once if the output is malformed.
+ * Pass the same `deadline` to several calls in one route so their total stays under the Vercel limit.
+ * Temperature is left at the default: Google recommends 1.0 for Gemini 3 models.
+ */
+export async function generateJson<T>(
+  system: string,
+  prompt: string,
+  schema: ZodType<T>,
+  opts: { deadline?: number } = {},
+): Promise<JsonResult<T>> {
+  const deadline = opts.deadline ?? newDeadline();
   const { value, model } = await withModelFallback(async (ai, m) => {
     let lastError = "";
     for (let attempt = 0; attempt < 2; attempt++) {
+      // Do not start a second try with too little time left to finish it.
+      if (attempt === 1 && msLeft(deadline) < 12_000) break;
       const contents = attempt === 0 ? prompt : `${prompt}\n\nYour previous reply was not valid. Return ONLY one valid JSON object. Problem: ${lastError}`;
-      const res = await generate(ai, m, contents, {
-        systemInstruction: system,
-        responseMimeType: "application/json",
-        temperature: 0.2,
-      });
+      const res = await generate(ai, m, contents, { systemInstruction: system, responseMimeType: "application/json" }, deadline, JSON_CALL_MS);
       const text = assertUsable(res);
       try {
         return schema.parse(parseJsonLoose(text));
@@ -191,7 +220,7 @@ export async function generateJson<T>(system: string, prompt: string, schema: Zo
 export async function ping(): Promise<{ model: string; latencyMs: number }> {
   const started = Date.now();
   const { value, model } = await withModelFallback(async (ai, m) => {
-    const res = await generate(ai, m, "Reply with the single word OK.", { temperature: 0 });
+    const res = await generate(ai, m, "Reply with the single word OK.", {}, newDeadline(30_000), 25_000);
     return assertUsable(res);
   });
   void value;

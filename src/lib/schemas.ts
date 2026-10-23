@@ -32,16 +32,27 @@ export const askRequestSchema = z.object({
   question: z.string().trim().min(5).max(300),
 });
 
+// Answers come from the model, so their size is not under our control. Oversized parts are trimmed
+// or dropped here instead of rejecting the whole request (which would fail the entire check).
+const MAX_SOURCES = 20;
+const MAX_URI = 1000;
+
 const sourceSchema = z.object({
-  title: z.string().max(300).default(""),
-  uri: z.string().max(1000),
+  title: z
+    .string()
+    .default("")
+    .transform((s) => s.slice(0, 300)),
+  uri: z.string(),
 });
 
 export const answerInputSchema = z.object({
   index: z.number().int().min(0).max(40),
-  question: z.string().max(300),
-  text: z.string().max(6000),
-  sources: z.array(sourceSchema).max(20).default([]),
+  question: z.string().transform((s) => s.slice(0, 300)),
+  text: z.string().transform((s) => s.slice(0, 6000)),
+  sources: z
+    .array(sourceSchema)
+    .default([])
+    .transform((list) => list.filter((s) => s.uri.length > 0 && s.uri.length <= MAX_URI).slice(0, MAX_SOURCES)),
 });
 
 export const analyzeRequestSchema = z.object({

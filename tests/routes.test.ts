@@ -17,6 +17,8 @@ vi.mock("@/lib/gemini", async () => {
     ping: vi.fn(),
     isConfigured: vi.fn(() => true),
     modelList: vi.fn(() => ["test-model"]),
+    newDeadline: vi.fn(() => Date.now() + 55_000),
+    msLeft: vi.fn((d: number) => d - Date.now()),
   };
 });
 
@@ -66,6 +68,27 @@ describe("/api/ask", () => {
     const res = await askRoute(req({ question: "Best juice shop in Kilpauk?" }, "10.0.0.5"));
     expect(res.status).toBe(429);
     expect((await res.json()).error.code).toBe("quota");
+  });
+});
+
+describe("oversized model output no longer fails the analysis", () => {
+  it("trims long text, drops over-long or excess source links, and still answers", async () => {
+    vi.mocked(gemini.generateJson).mockResolvedValue({
+      model: "test-model",
+      data: { answers: [], claims: [], notStated: [], gaps: [], summary: "ok" },
+    });
+    const sources = [
+      { title: "t".repeat(500), uri: "https://example.com/ok" },
+      { title: "long", uri: "https://example.com/" + "a".repeat(1100) },
+      ...Array.from({ length: 30 }, (_, i) => ({ title: "s", uri: `https://example.com/${i}` })),
+    ];
+    const answers = [{ index: 0, question: "Best juice bars in Kilpauk?", text: "x".repeat(7000), sources }];
+    const res = await analyzeRoute(req({ profile, answers }, "10.0.1.1"));
+    expect(res.status).toBe(200);
+    const prompt = vi.mocked(gemini.generateJson).mock.calls[0][1];
+    expect(prompt).not.toContain("a".repeat(1100)); // the 1100-char link was dropped
+    expect(prompt).not.toContain("x".repeat(6001)); // text was cut to 6000
+    expect(prompt.match(/https:\/\/example\.com\//g)!.length).toBeLessThanOrEqual(20); // at most 20 links kept
   });
 });
 

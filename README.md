@@ -44,7 +44,7 @@ Optional: `GEMINI_MODEL=<model id>` forces one model. If unset, the app tries `g
 
 ```powershell
 npm run typecheck
-npm test          # 21 unit tests (Gemini is mocked, no key needed)
+npm test          # 31 tests (Gemini is faked, no key needed)
 npm run build
 ```
 
